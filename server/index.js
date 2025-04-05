@@ -2,20 +2,39 @@ const {
   client,
   createTables,
   createUser,
-  createSkill,
+  createProduct,
+  createFavorite,
   fetchUsers,
-  fetchSkills,
-  createUserSkill,
-  fetchUserSkills,
-  deleteUserSkill,
+  fetchProducts,
+  fetchFavorites,
+  destroyFavorite,
   authenticate,
-  findUserByToken,
+  registerUser,
+  findUserWithToken,
 } = require("./db");
 const express = require("express");
 const app = express();
 app.use(express.json());
 
-// TODO - create middleware function isLoggedIn; use in the /api/auth/me route
+//for deployment only
+const path = require("path");
+app.get("/", (req, res) =>
+  res.sendFile(path.join(__dirname, "../client/dist/index.html"))
+);
+app.use(
+  "/assets",
+  express.static(path.join(__dirname, "../client/dist/assets"))
+);
+
+const isLoggedIn = async (req, res, next) => {
+  try {
+    req.user = await findUserWithToken(req.headers.authorization);
+    console.log(req.user);
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
 
 app.post("/api/auth/login", async (req, res, next) => {
   try {
@@ -25,17 +44,17 @@ app.post("/api/auth/login", async (req, res, next) => {
   }
 });
 
-app.get("/api/auth/me", async (req, res, next) => {
+app.post("/api/auth/register", async (req, res, next) => {
   try {
-    res.send(await findUserByToken(req.headers.authorization));
+    res.send(await registerUser(req.body));
   } catch (ex) {
     next(ex);
   }
 });
 
-app.get("/api/skills", async (req, res, next) => {
+app.get("/api/auth/me", async (req, res, next) => {
   try {
-    res.send(await fetchSkills());
+    res.send(await findUserWithToken(req.headers.authorization));
   } catch (ex) {
     next(ex);
   }
@@ -49,44 +68,30 @@ app.get("/api/users", async (req, res, next) => {
   }
 });
 
-// TODO - use isLoggedIn middleware
-app.get("/api/users/:id/userSkills", async (req, res, next) => {
+app.get("/api/users/:id/favorites", isLoggedIn, async (req, res, next) => {
   try {
-    // TODO - verify that the req.user.id on the route matches the user id in req.params
-
-    res.send(await fetchUserSkills(req.params.id));
+    if (req.user.id !== req.params.id) {
+      const error = Error("not authorized");
+      error.status = 401;
+      throw error;
+    }
+    res.send(await fetchFavorites(req.params.id));
   } catch (ex) {
     next(ex);
   }
 });
 
-// TODO - use isLoggedIn middleware
-app.delete("/api/users/:userId/userSkills/:id", async (req, res, next) => {
+app.post("/api/users/:id/favorites", isLoggedIn, async (req, res, next) => {
   try {
-    // if (req.params.userId !== req.user.id) {
-    //   const error = Error("not authorized");
-    //   error.status = 401;
-    //   throw error;
-    // }
-    await deleteUserSkill({ user_id: req.params.userId, id: req.params.id });
-    res.sendStatus(204);
-  } catch (ex) {
-    next(ex);
-  }
-});
-
-// TODO - use isLoggedIn middleware
-app.post("/api/users/:id/userSkills", async (req, res, next) => {
-  try {
-    // if (req.params.id !== req.user.id) {
-    //   const error = Error("not authorized");
-    //   error.status = 401;
-    //   throw error;
-    // }
+    if (req.user.id !== req.params.id) {
+      const error = Error("not authorized");
+      error.status = 401;
+      throw error;
+    }
     res.status(201).send(
-      await createUserSkill({
+      await createFavorite({
         user_id: req.params.id,
-        skill_id: req.body.skill_id,
+        product_id: req.body.product_id,
       })
     );
   } catch (ex) {
@@ -94,49 +99,72 @@ app.post("/api/users/:id/userSkills", async (req, res, next) => {
   }
 });
 
+app.delete(
+  "/api/users/:user_id/favorites/:id",
+  isLoggedIn,
+  async (req, res, next) => {
+    try {
+      if (req.user.id !== req.params.user_id) {
+        const error = Error("not authorized");
+        error.status = 401;
+        throw error;
+      }
+      await destroyFavorite({
+        user_id: req.params.user_id,
+        id: req.params.id,
+      });
+      res.sendStatus(204);
+    } catch (ex) {
+      next(ex);
+    }
+  }
+);
+
+app.get("/api/products", async (req, res, next) => {
+  try {
+    res.send(await fetchProducts());
+  } catch (ex) {
+    next(ex);
+  }
+});
+
 app.use((err, req, res, next) => {
   console.log(err);
-  res.status(err.status || 500).send({ error: err.message || err });
+  res.status(err.status || 500).send({
+    error: err.message ? err.message : err,
+  });
 });
 
 const init = async () => {
-  console.log("connecting to database");
+  const port = process.env.PORT || 3000;
   await client.connect();
   console.log("connected to database");
+
   await createTables();
   console.log("tables created");
-  const [logan, chase, lincoln, boots, running, barking, dogTricks, meowing] =
-    await Promise.all([
-      createUser({ username: "logan", password: "password1" }),
-      createUser({ username: "chase", password: "password2" }),
-      createUser({ username: "lincoln", password: "password3" }),
-      createUser({ username: "boots", password: "password4" }),
-      createSkill({ name: "running" }),
-      createSkill({ name: "barking" }),
-      createSkill({ name: "dogTricks" }),
-      createSkill({ name: "meowing" }),
-    ]);
 
-  console.log("users", await fetchUsers());
-  console.log("skills", await fetchSkills());
+  const [moe, lucy, ethyl, curly, foo, bar, bazz, quq, fip] = await Promise.all(
+    [
+      createUser({ username: "moe", password: "m_pw" }),
+      createUser({ username: "lucy", password: "l_pw" }),
+      createUser({ username: "ethyl", password: "e_pw" }),
+      createUser({ username: "curly", password: "c_pw" }),
+      createProduct({ name: "foo" }),
+      createProduct({ name: "bar" }),
+      createProduct({ name: "bazz" }),
+      createProduct({ name: "quq" }),
+      createProduct({ name: "fip" }),
+    ]
+  );
 
-  const userSkills = await Promise.all([
-    createUserSkill({ user_id: logan.id, skill_id: running.id }),
-    createUserSkill({ user_id: logan.id, skill_id: dogTricks.id }),
-    createUserSkill({ user_id: chase.id, skill_id: running.id }),
-    createUserSkill({ user_id: chase.id, skill_id: barking.id }),
-    createUserSkill({ user_id: chase.id, skill_id: meowing.id }),
-    createUserSkill({ user_id: lincoln.id, skill_id: barking.id }),
-    createUserSkill({ user_id: lincoln.id, skill_id: dogTricks.id }),
-    createUserSkill({ user_id: boots.id, skill_id: meowing.id }),
-  ]);
-  console.log("chase skills", await fetchUserSkills(chase.id));
-  await deleteUserSkill({ user_id: chase.id, id: userSkills[4].id });
-  console.log("chase skills", await fetchUserSkills(chase.id));
+  console.log(await fetchUsers());
+  console.log(await fetchProducts());
 
-  console.log("data seeded");
-
-  const port = process.env.PORT || 3000;
+  console.log(await fetchFavorites(moe.id));
+  const favorite = await createFavorite({
+    user_id: moe.id,
+    product_id: foo.id,
+  });
   app.listen(port, () => console.log(`listening on port ${port}`));
 };
 
